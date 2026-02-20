@@ -32,7 +32,7 @@ class CrawlExecutionParams:
 class CrawlExecutionResult:
     output_path: str
     total_records: int
-    source: str  # cache | live
+    source: str
 
 
 def run_crawl_job(params: CrawlExecutionParams) -> CrawlExecutionResult:
@@ -49,7 +49,7 @@ def run_crawl_job(params: CrawlExecutionParams) -> CrawlExecutionResult:
 
     cache = _build_cache(config)
 
-    if config.cache_enabled:
+    if cache is not None:
         cached_records = cache.load(params.region, config.cache_ttl_minutes)
         if cached_records is not None:
             CsvWriter.write(params.out, cached_records)
@@ -68,7 +68,7 @@ def run_crawl_job(params: CrawlExecutionParams) -> CrawlExecutionResult:
 
     try:
         records = crawler.crawl(region=params.region, max_pages=params.max_pages)
-        if config.cache_enabled:
+        if cache is not None:
             cache_path = cache.save(params.region, records)
             LOGGER.info("Cache saved at: %s", cache_path)
         CsvWriter.write(params.out, records)

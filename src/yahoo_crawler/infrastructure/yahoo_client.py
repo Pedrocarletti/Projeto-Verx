@@ -91,7 +91,6 @@ class YahooFinanceClient:
             )
 
     def get_current_page_html(self) -> str:
-        # Use only the table HTML to reduce BeautifulSoup parsing cost.
         try:
             row = self._driver.find_element(By.CSS_SELECTOR, self.ROW_SELECTOR)
             table = row.find_element(By.XPATH, "./ancestor::table[1]")
@@ -172,7 +171,7 @@ class YahooFinanceClient:
             if label_name == region_lower:
                 return label.find_element(By.CSS_SELECTOR, "input[type='checkbox']")
 
-        # Fallback for when the argument is a country code (e.g. ar, us, br).
+
         if len(region_lower) <= 3:
             try:
                 return options_container.find_element(
