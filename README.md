@@ -10,6 +10,7 @@ Python crawler to extract `symbol`, `name`, and `price (intraday)` from the Yaho
 
 - Python 3.7+
 - Google Chrome installed
+- Redis server (only if you want cache hits with `--use-cache` or `use_cache=true`)
 
 ## Install
 
@@ -35,15 +36,23 @@ Useful options:
 python -m yahoo_crawler.cli --region "Argentina" --out output/argentina.csv --max-pages 10 --timeout 60 --no-headless
 ```
 
-With Redis cache:
+With cache enabled (Redis-only):
 
 ```bash
 python -m yahoo_crawler.cli --region "Argentina" --out output/argentina.csv --use-cache --redis-url "redis://localhost:6379/0" --redis-key-prefix "yahoo_crawler:quotes" --cache-ttl-minutes 30
 ```
 
+Note: cache options (`--cache-ttl-minutes`, `--redis-url`, `--redis-key-prefix`) are relevant only when `--use-cache` is enabled.
+
 ## API + Swagger
 
 Start the API:
+
+```bash
+python -m yahoo_crawler.api
+```
+
+Alternative (explicit host/port):
 
 ```bash
 python -m uvicorn yahoo_crawler.api:app --host 127.0.0.1 --port 8000
@@ -59,6 +68,13 @@ Endpoints:
 - `GET /health`
 - `GET /meta/options`
 - `POST /crawl` (synchronous, waits to finish)
+
+Current API model:
+
+- Only synchronous crawl is supported (`/crawl`).
+- `POST /crawl` request body uses only `use_cache` for cache toggle.
+- Redis settings come from environment variables.
+- Local filesystem cache backend is not available anymore.
 
 Example request body for `POST /crawl`:
 
@@ -81,9 +97,15 @@ Recommended flow in Swagger:
 
 Cache behavior for API runs comes from environment variables:
 
+- `YAHOO_CRAWLER_API_HOST` (default: `127.0.0.1`)
+- `YAHOO_CRAWLER_API_PORT` (default: `8000`)
 - `YAHOO_CRAWLER_CACHE_TTL_MINUTES` (default: `30`)
 - `YAHOO_CRAWLER_REDIS_URL` (default: `redis://localhost:6379/0`)
 - `YAHOO_CRAWLER_REDIS_KEY_PREFIX` (default: `yahoo_crawler:quotes`)
+
+Note: API does not auto-load a `.env` file by itself. Export env vars in your shell or use your process manager/container setup.
+
+If `use_cache` is `false`, Redis is not used during the crawl execution.
 
 ## CSV Format
 
@@ -140,6 +162,7 @@ Test coverage includes:
 - parser (`BeautifulSoup`) using HTML fixtures
 - CSV writer
 - orchestration (pagination + deduplication + `region` parameter)
+- API validation for `/crawl` payload and defaults
 
 ## Robustness Notes
 
@@ -151,7 +174,7 @@ Test coverage includes:
 ## Performance
 
 - Per-region persistent cache (`--use-cache`) with configurable TTL (`--cache-ttl-minutes`)
-- Redis cache backend
+- Redis-only cache backend
 - BeautifulSoup parses table HTML only (avoids parsing full page)
 - In-memory parse cache by page hash (avoids repeated parsing)
 - One call per iteration for `next page` check (fewer Selenium trips)
