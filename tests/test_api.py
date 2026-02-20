@@ -7,8 +7,7 @@ from yahoo_crawler.application.crawl_service import CrawlExecutionResult
 
 
 class _ImmediateExecutor:
-    def submit(self, fn, *args, **kwargs):  # pragma: no cover - simple test helper
-        fn(*args, **kwargs)
+    def submit(self, fn, *args, **kwargs):
         return None
 
 
