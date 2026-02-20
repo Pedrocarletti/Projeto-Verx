@@ -8,6 +8,7 @@ from yahoo_crawler.application.crawl_service import CrawlExecutionResult
 
 class _ImmediateExecutor:
     def submit(self, fn, *args, **kwargs):
+        fn(*args, **kwargs)
         return None
 
 
