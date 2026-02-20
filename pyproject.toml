@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yahoo-screener-crawler"
+version = "0.1.0"
+description = "Crawler de equities do Yahoo Finance com Selenium + BeautifulSoup."
+readme = "README.md"
+requires-python = ">=3.7"
+authors = [
+  { name = "Projeto Verx" }
+]
+dependencies = [
+  "selenium>=4.6,<4.12",
+  "beautifulsoup4>=4.11,<4.13",
+  "lxml>=4.9,<5.0",
+  "urllib3<2",
+  "fastapi>=0.95,<0.100",
+  "uvicorn>=0.22,<0.23"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4,<8.0",
+  "pytest-mock>=3.11,<4.0",
+  "ruff>=0.6,<1.0",
+  "mypy>=1.10,<2.0; python_version >= '3.8'",
+  "mypy>=1.4,<1.5; python_version < '3.8'"
+]
+
+[project.scripts]
+yahoo-crawler = "yahoo_crawler.cli:main"
+yahoo-crawler-api = "yahoo_crawler.api:run"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["src/yahoo_screener_crawler.egg-info"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_configs = true

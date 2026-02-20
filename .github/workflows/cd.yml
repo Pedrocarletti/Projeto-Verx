@@ -1,0 +1,324 @@
+name: CD
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: "Ambiente de deploy"
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - hml
+          - prod
+      image_tag:
+        description: "Tag da imagem (opcional). Padrao: SHA curto do commit."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: yahoo-crawler-cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality-gates:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Ruff
+        run: ruff check .
+
+      - name: Mypy
+        run: mypy src
+
+      - name: Pytest
+        run: pytest -q
+
+  build-and-push-image:
+    name: Build and push image
+    needs: quality-gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      image_uri: ${{ steps.image.outputs.uri }}
+      image_tag: ${{ steps.tag.outputs.value }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate build configuration
+        run: |
+          test -n "${{ vars.AWS_REGION }}" || (echo "Missing vars.AWS_REGION" && exit 1)
+          test -n "${{ secrets.AWS_ROLE_TO_ASSUME }}" || (echo "Missing secrets.AWS_ROLE_TO_ASSUME" && exit 1)
+          test -n "${{ vars.ECR_REPOSITORY }}" || (echo "Missing vars.ECR_REPOSITORY" && exit 1)
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.image_tag }}" ]; then
+            echo "value=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compose image uri
+        id: image
+        run: |
+          echo "uri=${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ steps.tag.outputs.value }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image to ECR
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          provenance: false
+          tags: |
+            ${{ steps.image.outputs.uri }}
+
+  trivy-scan:
+    name: Trivy scan
+    needs: build-and-push-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ needs.build-and-push-image.outputs.image_uri }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+  deploy-dev:
+    name: Deploy ECS (dev)
+    needs: [build-and-push-image, trivy-scan]
+    if: >
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.target_environment == 'dev')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: dev
+    steps:
+      - name: Validate deploy configuration
+        run: |
+          test -n "${{ vars.AWS_REGION }}" || (echo "Missing vars.AWS_REGION for dev" && exit 1)
+          test -n "${{ secrets.AWS_ROLE_TO_ASSUME }}" || (echo "Missing secrets.AWS_ROLE_TO_ASSUME for dev" && exit 1)
+          test -n "${{ vars.ECS_CLUSTER }}" || (echo "Missing vars.ECS_CLUSTER for dev" && exit 1)
+          test -n "${{ vars.ECS_SERVICE }}" || (echo "Missing vars.ECS_SERVICE for dev" && exit 1)
+          test -n "${{ vars.ECS_CONTAINER_NAME }}" || (echo "Missing vars.ECS_CONTAINER_NAME for dev" && exit 1)
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Download and sanitize task definition
+        run: |
+          set -euo pipefail
+          TASK_DEFINITION_ARN=$(aws ecs describe-services \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_SERVICE }}" \
+            --query "services[0].taskDefinition" \
+            --output text)
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_DEFINITION_ARN" \
+            --query "taskDefinition" > task-definition.json
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy
+          )' task-definition.json > task-definition.clean.json
+
+      - name: Render ECS task definition
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.clean.json
+          container-name: ${{ vars.ECS_CONTAINER_NAME }}
+          image: ${{ needs.build-and-push-image.outputs.image_uri }}
+
+      - name: Deploy to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ vars.ECS_SERVICE }}
+          cluster: ${{ vars.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+  deploy-hml:
+    name: Deploy ECS (hml)
+    needs: [build-and-push-image, trivy-scan]
+    if: >
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.target_environment == 'hml' || inputs.target_environment == 'prod'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: hml
+    steps:
+      - name: Validate deploy configuration
+        run: |
+          test -n "${{ vars.AWS_REGION }}" || (echo "Missing vars.AWS_REGION for hml" && exit 1)
+          test -n "${{ secrets.AWS_ROLE_TO_ASSUME }}" || (echo "Missing secrets.AWS_ROLE_TO_ASSUME for hml" && exit 1)
+          test -n "${{ vars.ECS_CLUSTER }}" || (echo "Missing vars.ECS_CLUSTER for hml" && exit 1)
+          test -n "${{ vars.ECS_SERVICE }}" || (echo "Missing vars.ECS_SERVICE for hml" && exit 1)
+          test -n "${{ vars.ECS_CONTAINER_NAME }}" || (echo "Missing vars.ECS_CONTAINER_NAME for hml" && exit 1)
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Download and sanitize task definition
+        run: |
+          set -euo pipefail
+          TASK_DEFINITION_ARN=$(aws ecs describe-services \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_SERVICE }}" \
+            --query "services[0].taskDefinition" \
+            --output text)
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_DEFINITION_ARN" \
+            --query "taskDefinition" > task-definition.json
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy
+          )' task-definition.json > task-definition.clean.json
+
+      - name: Render ECS task definition
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.clean.json
+          container-name: ${{ vars.ECS_CONTAINER_NAME }}
+          image: ${{ needs.build-and-push-image.outputs.image_uri }}
+
+      - name: Deploy to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ vars.ECS_SERVICE }}
+          cluster: ${{ vars.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+  deploy-prod:
+    name: Deploy ECS (prod)
+    needs: [build-and-push-image, trivy-scan, deploy-hml]
+    if: >
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.target_environment == 'prod')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: prod
+    steps:
+      - name: Validate deploy configuration
+        run: |
+          test -n "${{ vars.AWS_REGION }}" || (echo "Missing vars.AWS_REGION for prod" && exit 1)
+          test -n "${{ secrets.AWS_ROLE_TO_ASSUME }}" || (echo "Missing secrets.AWS_ROLE_TO_ASSUME for prod" && exit 1)
+          test -n "${{ vars.ECS_CLUSTER }}" || (echo "Missing vars.ECS_CLUSTER for prod" && exit 1)
+          test -n "${{ vars.ECS_SERVICE }}" || (echo "Missing vars.ECS_SERVICE for prod" && exit 1)
+          test -n "${{ vars.ECS_CONTAINER_NAME }}" || (echo "Missing vars.ECS_CONTAINER_NAME for prod" && exit 1)
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Download and sanitize task definition
+        run: |
+          set -euo pipefail
+          TASK_DEFINITION_ARN=$(aws ecs describe-services \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_SERVICE }}" \
+            --query "services[0].taskDefinition" \
+            --output text)
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_DEFINITION_ARN" \
+            --query "taskDefinition" > task-definition.json
+          jq 'del(
+            .taskDefinitionArn,
+            .revision,
+            .status,
+            .requiresAttributes,
+            .compatibilities,
+            .registeredAt,
+            .registeredBy
+          )' task-definition.json > task-definition.clean.json
+
+      - name: Render ECS task definition
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.clean.json
+          container-name: ${{ vars.ECS_CONTAINER_NAME }}
+          image: ${{ needs.build-and-push-image.outputs.image_uri }}
+
+      - name: Deploy to Amazon ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ vars.ECS_SERVICE }}
+          cluster: ${{ vars.ECS_CLUSTER }}
+          wait-for-service-stability: true

@@ -1,0 +1,15 @@
+.git
+.github
+.cache
+.mypy_cache
+.pytest_cache
+.ruff_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+tests
+output
+debug_after_apply.png
+page.html
