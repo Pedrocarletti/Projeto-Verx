@@ -1,13 +1,10 @@
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor
-from threading import Lock
-from typing import Dict, Optional
-from uuid import uuid4
+from typing import Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 
 from yahoo_crawler.application.crawl_service import (
     CrawlExecutionParams,
@@ -15,49 +12,52 @@ from yahoo_crawler.application.crawl_service import (
     run_crawl_job,
 )
 
+DEFAULT_CACHE_TTL_MINUTES = 30
+DEFAULT_REDIS_URL = "redis://localhost:6379/0"
+DEFAULT_REDIS_KEY_PREFIX = "yahoo_crawler:quotes"
+
 
 class CrawlRequest(BaseModel):
-    region: str = Field(..., example="Argentina", description="Regiao do filtro no Yahoo.")
+    region: str = Field(..., example="Argentina", description="Region filter value in Yahoo.")
     out: str = Field(
         "output/equities.csv",
         example="output/argentina.csv",
-        description="Caminho do CSV de saida.",
+        description="Output CSV path.",
     )
     max_pages: Optional[int] = Field(
-        None, example=3, description="Limite de paginas para crawl (opcional)."
+        None, example=3, description="Page limit for crawl (optional)."
     )
     timeout_seconds: int = Field(
-        45, ge=10, le=180, description="Timeout de espera do Selenium em segundos."
+        45, ge=10, le=180, description="Selenium wait timeout in seconds."
     )
     headless: bool = Field(
-        True, description="Executa navegador sem interface visual quando True."
+        True, description="Run browser in headless mode when True."
     )
     log_level: str = Field(
-        "INFO", example="INFO", description="DEBUG, INFO, WARNING ou ERROR."
+        "INFO", example="INFO", description="DEBUG, INFO, WARNING, or ERROR."
     )
     use_cache: bool = Field(
         False,
-        description="Ativa cache por regiao para evitar recrawls em execucoes repetidas.",
+        description="Enable region cache to avoid recrawls in repeated runs.",
     )
-    cache_backend: str = Field(
-        "local",
-        regex="^(local|redis)$",
-        description="Backend de cache: local ou redis.",
-    )
-    cache_dir: str = Field(
-        ".cache/yahoo_crawler", description="Diretorio para arquivos de cache."
-    )
-    cache_ttl_minutes: int = Field(
-        30, ge=0, le=1440, description="TTL do cache em minutos."
-    )
-    redis_url: str = Field(
-        "redis://localhost:6379/0",
-        description="URL de conexao Redis.",
-    )
-    redis_key_prefix: str = Field(
-        "yahoo_crawler:quotes",
-        description="Prefixo das chaves no Redis.",
-    )
+
+    @root_validator(pre=True)
+    def _reject_unknown_fields(cls, values):
+        allowed_fields = {
+            "region",
+            "out",
+            "max_pages",
+            "timeout_seconds",
+            "headless",
+            "log_level",
+            "use_cache",
+        }
+        unknown_fields = sorted(set(values.keys()) - allowed_fields)
+        if unknown_fields:
+            raise ValueError(
+                "Unknown field(s): {0}".format(", ".join(unknown_fields))
+            )
+        return values
 
 
 class CrawlResponse(BaseModel):
@@ -68,35 +68,14 @@ class CrawlResponse(BaseModel):
     elapsed_seconds: float
 
 
-class CrawlSubmitResponse(BaseModel):
-    accepted: bool
-    job_id: str
-    status: str
-
-
-class CrawlJobStatusResponse(BaseModel):
-    job_id: str
-    status: str
-    submitted_at: float
-    started_at: Optional[float] = None
-    finished_at: Optional[float] = None
-    elapsed_seconds: Optional[float] = None
-    result: Optional[CrawlResponse] = None
-    error: Optional[str] = None
-
-
 app = FastAPI(
     title="Yahoo Screener Crawler API",
     description=(
-        "API para executar o crawler de equities do Yahoo Finance. "
-        "Use /docs para testar os parametros via Swagger."
+        "API to run the Yahoo Finance equities crawler. "
+        "Use /docs to test parameters with Swagger."
     ),
     version="0.1.0",
 )
-
-_executor = ThreadPoolExecutor(max_workers=2)
-_jobs_lock = Lock()
-_jobs: Dict[str, dict] = {}
 
 
 @app.get("/health")
@@ -111,12 +90,14 @@ def options() -> dict:
             "/health",
             "/meta/options",
             "/crawl",
-            "/crawl/submit",
-            "/crawl/jobs/{job_id}",
         ],
         "notes": [
-            "Use POST /crawl para execucao sincrona (espera terminar).",
-            "Use POST /crawl/submit para iniciar sem bloquear e depois consultar status.",
+            "Use POST /crawl for synchronous execution (waits until done).",
+            (
+                "Redis cache settings come from environment variables: "
+                "YAHOO_CRAWLER_CACHE_TTL_MINUTES, YAHOO_CRAWLER_REDIS_URL, "
+                "and YAHOO_CRAWLER_REDIS_KEY_PREFIX."
+            ),
             "Swagger: /docs",
             "ReDoc: /redoc",
         ],
@@ -128,11 +109,6 @@ def options() -> dict:
             "headless": True,
             "log_level": "INFO",
             "use_cache": False,
-            "cache_backend": "local",
-            "cache_dir": ".cache/yahoo_crawler",
-            "cache_ttl_minutes": 30,
-            "redis_url": "redis://localhost:6379/0",
-            "redis_key_prefix": "yahoo_crawler:quotes",
         },
     }
 
@@ -140,6 +116,17 @@ def options() -> dict:
 @app.post("/crawl", response_model=CrawlResponse)
 def crawl(request: CrawlRequest) -> CrawlResponse:
     start = time.perf_counter()
+    cache_ttl_minutes = _read_int_env(
+        "YAHOO_CRAWLER_CACHE_TTL_MINUTES",
+        DEFAULT_CACHE_TTL_MINUTES,
+        minimum=0,
+        maximum=1440,
+    )
+    redis_url = _read_str_env("YAHOO_CRAWLER_REDIS_URL", DEFAULT_REDIS_URL)
+    redis_key_prefix = _read_str_env(
+        "YAHOO_CRAWLER_REDIS_KEY_PREFIX", DEFAULT_REDIS_KEY_PREFIX
+    )
+
     params = CrawlExecutionParams(
         region=request.region,
         out=request.out,
@@ -148,16 +135,14 @@ def crawl(request: CrawlRequest) -> CrawlResponse:
         headless=request.headless,
         log_level=request.log_level,
         use_cache=request.use_cache,
-        cache_backend=request.cache_backend,
-        cache_dir=request.cache_dir,
-        cache_ttl_minutes=request.cache_ttl_minutes,
-        redis_url=request.redis_url,
-        redis_key_prefix=request.redis_key_prefix,
+        cache_ttl_minutes=cache_ttl_minutes,
+        redis_url=redis_url,
+        redis_key_prefix=redis_key_prefix,
     )
 
     try:
         result: CrawlExecutionResult = run_crawl_job(params)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
     return CrawlResponse(
@@ -168,93 +153,21 @@ def crawl(request: CrawlRequest) -> CrawlResponse:
         elapsed_seconds=round(time.perf_counter() - start, 3),
     )
 
-
-@app.post("/crawl/submit", response_model=CrawlSubmitResponse)
-def crawl_submit(request: CrawlRequest) -> CrawlSubmitResponse:
-    job_id = str(uuid4())
-    submitted_at = time.time()
-
-    with _jobs_lock:
-        _jobs[job_id] = {
-            "job_id": job_id,
-            "status": "queued",
-            "submitted_at": submitted_at,
-            "started_at": None,
-            "finished_at": None,
-            "elapsed_seconds": None,
-            "result": None,
-            "error": None,
-        }
-
-    _executor.submit(_run_crawl_job_async, job_id, request)
-    return CrawlSubmitResponse(accepted=True, job_id=job_id, status="queued")
+def _read_str_env(name: str, default: str) -> str:
+    return os.getenv(name, default).strip() or default
 
 
-@app.get("/crawl/jobs/{job_id}", response_model=CrawlJobStatusResponse)
-def crawl_job_status(job_id: str) -> CrawlJobStatusResponse:
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-
-    if not job:
-        raise HTTPException(status_code=404, detail="job_id nao encontrado.")
-
-    return CrawlJobStatusResponse(**job)
-
-
-def _run_crawl_job_async(job_id: str, request: CrawlRequest) -> None:
-    with _jobs_lock:
-        job = _jobs.get(job_id)
-        if not job:
-            return
-        job["status"] = "running"
-        job["started_at"] = time.time()
-
-    start = time.perf_counter()
-    params = CrawlExecutionParams(
-        region=request.region,
-        out=request.out,
-        max_pages=request.max_pages,
-        timeout_seconds=request.timeout_seconds,
-        headless=request.headless,
-        log_level=request.log_level,
-        use_cache=request.use_cache,
-        cache_backend=request.cache_backend,
-        cache_dir=request.cache_dir,
-        cache_ttl_minutes=request.cache_ttl_minutes,
-        redis_url=request.redis_url,
-        redis_key_prefix=request.redis_key_prefix,
-    )
+def _read_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
 
     try:
-        result: CrawlExecutionResult = run_crawl_job(params)
-        response = CrawlResponse(
-            success=True,
-            source=result.source,
-            output_path=result.output_path,
-            total_records=result.total_records,
-            elapsed_seconds=round(time.perf_counter() - start, 3),
-        )
-        finished_at = time.time()
-        with _jobs_lock:
-            job = _jobs.get(job_id)
-            if not job:
-                return
-            job["status"] = "completed"
-            job["finished_at"] = finished_at
-            job["elapsed_seconds"] = response.elapsed_seconds
-            job["result"] = response
-            job["error"] = None
-    except Exception as exc:  # noqa: BLE001
-        finished_at = time.time()
-        with _jobs_lock:
-            job = _jobs.get(job_id)
-            if not job:
-                return
-            job["status"] = "failed"
-            job["finished_at"] = finished_at
-            job["elapsed_seconds"] = round(time.perf_counter() - start, 3)
-            job["error"] = str(exc)
-            job["result"] = None
+        value = int(raw.strip())
+    except ValueError:
+        return default
+
+    return max(minimum, min(maximum, value))
 
 
 def run() -> None:

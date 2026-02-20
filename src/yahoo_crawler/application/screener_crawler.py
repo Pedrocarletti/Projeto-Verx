@@ -39,7 +39,7 @@ class ScreenerCrawler:
 
             has_next_page = self._client.has_next_page()
             LOGGER.info(
-                "Pagina %s | extraidos=%s | novos=%s | acumulado=%s | %s | next=%s | parse_cache=%s",
+                "Page %s | extracted=%s | new=%s | total=%s | %s | next=%s | parse_cache=%s",
                 page_number,
                 len(quotes),
                 added_count,
@@ -52,13 +52,13 @@ class ScreenerCrawler:
             current_signature = tuple([quote.symbol for quote in quotes[:3]])
             if current_signature and current_signature == last_signature and has_next_page:
                 LOGGER.warning(
-                    "Assinatura da pagina repetida detectada. Encerrando para evitar loop."
+                    "Repeated page signature detected. Stopping to avoid loop."
                 )
                 break
             last_signature = current_signature
 
             if max_pages is not None and page_number >= max_pages:
-                LOGGER.info("Limite de paginas atingido: %s", max_pages)
+                LOGGER.info("Page limit reached: %s", max_pages)
                 break
 
             if not has_next_page:

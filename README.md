@@ -1,61 +1,55 @@
 # Yahoo Screener Crawler
 
-Crawler em Python para extrair `symbol`, `name` e `price (intraday)` do Yahoo Finance Equity Screener:
+Python crawler to extract `symbol`, `name`, and `price (intraday)` from the Yahoo Finance Equity Screener:
 
-- URL alvo: `https://finance.yahoo.com/research-hub/screener/equity/`
-- Stack obrigatoria usada: `Selenium` + `BeautifulSoup` + `orientacao a objetos`
-- Saida: arquivo CSV com colunas `"symbol","name","price"`
+- Target URL: `https://finance.yahoo.com/research-hub/screener/equity/`
+- Required stack: `Selenium` + `BeautifulSoup` + `object-oriented design`
+- Output: CSV file with columns `"symbol","name","price"`
 
-## Requisitos
+## Requirements
 
 - Python 3.7+
-- Google Chrome instalado
+- Google Chrome installed
 
-## Instalar
+## Install
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-ou:
+or:
 
 ```bash
 python -m pip install .
 ```
 
-## Executar
+## Run
 
 ```bash
 python -m yahoo_crawler.cli --region "Argentina" --out output/argentina.csv
 ```
 
-Opcoes uteis:
+Useful options:
 
 ```bash
 python -m yahoo_crawler.cli --region "Argentina" --out output/argentina.csv --max-pages 10 --timeout 60 --no-headless
 ```
 
-Com cache local (melhor para execucoes repetidas):
+With Redis cache:
 
 ```bash
-python -m yahoo_crawler.cli --region "Argentina" --out output/argentina.csv --use-cache --cache-ttl-minutes 30
-```
-
-Com cache Redis:
-
-```bash
-python -m yahoo_crawler.cli --region "Argentina" --out output/argentina.csv --use-cache --cache-backend redis --redis-url "redis://localhost:6379/0" --redis-key-prefix "yahoo_crawler:quotes" --cache-ttl-minutes 30
+python -m yahoo_crawler.cli --region "Argentina" --out output/argentina.csv --use-cache --redis-url "redis://localhost:6379/0" --redis-key-prefix "yahoo_crawler:quotes" --cache-ttl-minutes 30
 ```
 
 ## API + Swagger
 
-Suba a API:
+Start the API:
 
 ```bash
 python -m uvicorn yahoo_crawler.api:app --host 127.0.0.1 --port 8000
 ```
 
-Abra no navegador:
+Open in browser:
 
 - Swagger UI: `http://127.0.0.1:8000/docs`
 - ReDoc: `http://127.0.0.1:8000/redoc`
@@ -64,11 +58,9 @@ Endpoints:
 
 - `GET /health`
 - `GET /meta/options`
-- `POST /crawl` (sincrono, espera terminar)
-- `POST /crawl/submit` (assíncrono, retorna `job_id` imediato)
-- `GET /crawl/jobs/{job_id}` (consulta status)
+- `POST /crawl` (synchronous, waits to finish)
 
-Exemplo de request no `POST /crawl`:
+Example request body for `POST /crawl`:
 
 ```json
 {
@@ -78,24 +70,24 @@ Exemplo de request no `POST /crawl`:
   "timeout_seconds": 60,
   "headless": true,
   "log_level": "INFO",
-  "use_cache": true,
-  "cache_backend": "redis",
-  "cache_dir": ".cache/yahoo_crawler",
-  "cache_ttl_minutes": 30,
-  "redis_url": "redis://localhost:6379/0",
-  "redis_key_prefix": "yahoo_crawler:quotes"
+  "use_cache": true
 }
 ```
 
-Fluxo recomendado para nao bloquear no Swagger:
+Recommended flow in Swagger:
 
-1. Chame `POST /crawl/submit` com o mesmo body do crawl.
-2. Copie o `job_id` retornado.
-3. Consulte `GET /crawl/jobs/{job_id}` ate `status = completed` ou `failed`.
+1. Call `POST /crawl` directly with your request body.
+2. Wait for the crawl execution response.
 
-## Formato do CSV
+Cache behavior for API runs comes from environment variables:
 
-Exemplo:
+- `YAHOO_CRAWLER_CACHE_TTL_MINUTES` (default: `30`)
+- `YAHOO_CRAWLER_REDIS_URL` (default: `redis://localhost:6379/0`)
+- `YAHOO_CRAWLER_REDIS_KEY_PREFIX` (default: `yahoo_crawler:quotes`)
+
+## CSV Format
+
+Example:
 
 ```csv
 "symbol","name","price"
@@ -103,107 +95,94 @@ Exemplo:
 "NOKA.BA","Nokia Corporation","557.50"
 ```
 
-## Arquitetura
+## Architecture
 
 ```text
 src/yahoo_crawler/
   application/
-    screener_crawler.py      # orquestracao do caso de uso
-    crawl_service.py         # servico compartilhado (CLI/API)
+    screener_crawler.py      # use-case orchestration
+    crawl_service.py         # shared service for CLI/API
   cache/
-    quote_cache.py           # cache local em arquivo por regiao (TTL)
-    redis_quote_cache.py     # cache Redis por regiao (TTL via created_at)
+    redis_quote_cache.py     # per-region Redis cache (TTL via created_at)
   domain/
     models.py                # EquityQuote
   infrastructure/
-    webdriver_factory.py     # criacao/config Selenium
-    yahoo_client.py          # navegacao, filtro region, paginacao
+    webdriver_factory.py     # Selenium driver creation/config
+    yahoo_client.py          # navigation, region filter, pagination
   output/
-    csv_writer.py            # escrita CSV
+    csv_writer.py            # CSV writing
   parsing/
-    screener_parser.py       # parsing com BeautifulSoup
-  cli.py                     # interface de linha de comando
-  api.py                     # API HTTP com Swagger
+    screener_parser.py       # BeautifulSoup parsing
+  cli.py                     # command-line interface
+  api.py                     # HTTP API with Swagger
 ```
 
-## Testes unitarios
+## Unit Tests
 
 ```bash
 pytest -q
 ```
 
-Limpeza de artefatos locais:
+Clean local artifacts:
 
 ```powershell
 .\scripts\cleanup.ps1
 ```
 
-Para limpar tambem arquivos em `output/`:
+Also remove files inside `output/`:
 
 ```powershell
 .\scripts\cleanup.ps1 -RemoveOutputFiles
 ```
 
-Cobertura de testes:
+Test coverage includes:
 
-- parser (`BeautifulSoup`) com fixture HTML
-- escrita de CSV
-- orquestracao (paginas + deduplicacao + parametro `region`)
+- parser (`BeautifulSoup`) using HTML fixtures
+- CSV writer
+- orchestration (pagination + deduplication + `region` parameter)
 
-## Observacoes de robustez
+## Robustness Notes
 
-- Esperas explicitas (`WebDriverWait`) no Selenium
-- Seletor por `data-testid` para tabela/paginacao
-- Deduplicacao por `symbol` no nivel da aplicacao
-- `--max-pages` para execucao controlada em cenarios muito grandes
+- Explicit waits (`WebDriverWait`) in Selenium
+- `data-testid` selectors for table/pagination
+- Deduplication by `symbol` at application level
+- `--max-pages` for controlled execution in very large datasets
 
 ## Performance
 
-- Cache persistente por regiao (`--use-cache`) com TTL configuravel (`--cache-ttl-minutes`)
-- Backend de cache selecionavel (`--cache-backend local|redis`)
-- Parse com BeautifulSoup apenas do HTML da tabela (evita parse da pagina inteira)
-- Cache em memoria de parsing por hash da pagina (evita retrabalho se pagina repetir)
-- Uma chamada por iteracao para verificar `next page` (menos ida ao Selenium)
+- Per-region persistent cache (`--use-cache`) with configurable TTL (`--cache-ttl-minutes`)
+- Redis cache backend
+- BeautifulSoup parses table HTML only (avoids parsing full page)
+- In-memory parse cache by page hash (avoids repeated parsing)
+- One call per iteration for `next page` check (fewer Selenium trips)
 
-## CI/CD no GitHub Actions
+## CI/CD on GitHub Actions
 
-Workflows adicionados:
+Workflows:
 
-- `./.github/workflows/ci.yml`: roda `ruff`, `mypy` e `pytest` em `push`/`pull_request` para `main` e `master` (com disparo manual).
-- `./.github/workflows/cd.yml`: roda quality gates, build de imagem Docker, scan de seguranca com Trivy e deploy automatico no ECS por ambiente.
+- `./.github/workflows/ci.yml`: runs `ruff`, `mypy`, and `pytest` on `push`/`pull_request` to `main` and `master` (plus manual trigger).
+- `./.github/workflows/cd.yml`: only builds the Docker image (no AWS, no ECR, no ECS).
 
-Fluxo de deploy:
+Current flow:
 
-- `push` na `main` ou `master`: deploy em `dev`
-- `push` de tag `v*`: deploy em `hml` e depois `prod`
-- `workflow_dispatch`: deploy manual escolhendo `dev`, `hml` ou `prod` e opcionalmente `image_tag`
+- `push`/`pull_request`: `ci.yml` validates code quality (`ruff`, `mypy`, `pytest`).
+- `push` to `main`/`master` or tag `v*`: `cd.yml` validates that `Dockerfile` builds.
+- `workflow_dispatch`: runs `cd.yml` manually with optional `image_tag`.
 
-Configuracao no GitHub:
+GitHub setup for current scenario:
 
-1. Crie os environments: `dev`, `hml`, `prod`.
-2. No environment `prod`, habilite `Required reviewers` para aprovacao antes do deploy.
-3. Configure as variaveis (`Settings > Secrets and variables > Actions > Variables`):
-   - Repo-level: `AWS_REGION`, `ECR_REPOSITORY`
-   - Environment-level (`dev`/`hml`/`prod`): `ECS_CLUSTER`, `ECS_SERVICE`, `ECS_CONTAINER_NAME`
-4. Configure o segredo (`Settings > Secrets and variables > Actions > Secrets`):
-   - Repo-level: `AWS_ROLE_TO_ASSUME` (role AWS com OIDC para GitHub Actions, permissao em ECR + ECS)
+- No AWS variables or secrets are required by the active workflows.
+- If you want versioned builds, keep creating tags with `v*`.
 
-Release para subir `hml` e `prod`:
+## Publish to GitHub
 
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-## Entrega no GitHub
-
-Depois de validar localmente, publique no seu repositório e compartilhe o link:
+After local validation, publish to your repository:
 
 ```bash
 git init
 git add .
 git commit -m "feat: yahoo equity screener crawler with selenium + bs4 + tests"
 git branch -M main
-git remote add origin <SEU_REPO_URL>
+git remote add origin <YOUR_REPO_URL>
 git push -u origin main
 ```

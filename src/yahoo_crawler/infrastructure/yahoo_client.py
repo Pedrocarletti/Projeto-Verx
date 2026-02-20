@@ -6,6 +6,7 @@ from selenium.common.exceptions import (
     NoSuchElementException,
     StaleElementReferenceException,
     TimeoutException,
+    WebDriverException,
 )
 from selenium.webdriver.common.by import By
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -41,12 +42,12 @@ class YahooFinanceClient:
             except TimeoutException as exc:
                 last_error = exc
                 LOGGER.warning(
-                    "Timeout ao carregar pagina (tentativa %s/3). Repetindo...",
+                    "Timeout while loading page (attempt %s/3). Retrying...",
                     attempt,
                 )
                 try:
                     self._driver.execute_script("window.stop();")
-                except Exception:  # noqa: BLE001
+                except WebDriverException:
                     pass
         if last_error:
             raise last_error
@@ -57,9 +58,9 @@ class YahooFinanceClient:
     def apply_region_filter(self, region: str) -> None:
         normalized_region = region.strip()
         if not normalized_region:
-            raise ValueError("region nao pode ser vazio.")
+            raise ValueError("region cannot be empty.")
 
-        LOGGER.info("Aplicando filtro de regiao: %s", normalized_region)
+        LOGGER.info("Applying region filter: %s", normalized_region)
         previous_first_symbol = self._get_first_symbol()
         previous_total = self._get_total_label()
 
@@ -85,12 +86,12 @@ class YahooFinanceClient:
             )
         except TimeoutException:
             LOGGER.warning(
-                "Tabela nao sinalizou atualizacao apos aplicar regiao '%s'. Prosseguindo.",
+                "Table did not signal update after applying region '%s'. Continuing.",
                 normalized_region,
             )
 
     def get_current_page_html(self) -> str:
-        # Usa apenas o HTML da tabela para reduzir custo de parsing no BeautifulSoup.
+        # Use only the table HTML to reduce BeautifulSoup parsing cost.
         try:
             row = self._driver.find_element(By.CSS_SELECTOR, self.ROW_SELECTOR)
             table = row.find_element(By.XPATH, "./ancestor::table[1]")
@@ -120,7 +121,7 @@ class YahooFinanceClient:
             )
         except TimeoutException:
             LOGGER.warning(
-                "Nao foi possivel confirmar mudanca de pagina rapidamente. Prosseguindo."
+                "Could not confirm page change quickly. Continuing."
             )
         self._wait_for_table_ready()
 
@@ -171,7 +172,7 @@ class YahooFinanceClient:
             if label_name == region_lower:
                 return label.find_element(By.CSS_SELECTOR, "input[type='checkbox']")
 
-        # Fallback para quando o parametro e um codigo (ex.: ar, us, br).
+        # Fallback for when the argument is a country code (e.g. ar, us, br).
         if len(region_lower) <= 3:
             try:
                 return options_container.find_element(
@@ -182,7 +183,7 @@ class YahooFinanceClient:
 
         available_regions = self._get_available_regions(labels)
         raise ValueError(
-            "Regiao '{0}' nao encontrada. Regioes disponiveis (amostra): {1}".format(
+            "Region '{0}' not found. Available regions (sample): {1}".format(
                 region, ", ".join(available_regions[:15])
             )
         )

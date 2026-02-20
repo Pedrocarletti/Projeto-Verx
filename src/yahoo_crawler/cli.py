@@ -10,72 +10,61 @@ from yahoo_crawler.utils.logging_config import configure_logging
 def _build_args(argv: Optional[list] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Crawler Yahoo Finance (equity screener) com Selenium + BeautifulSoup."
+            "Yahoo Finance crawler (equity screener) with Selenium + BeautifulSoup."
         )
     )
     parser.add_argument(
         "--region",
         required=True,
-        help='Nome da regiao exatamente como aparece no filtro do Yahoo. Ex.: "Argentina"',
+        help='Region name exactly as displayed in Yahoo filter. Example: "Argentina"',
     )
     parser.add_argument(
         "--out",
         default="output/equities.csv",
-        help="Caminho do CSV de saida. Padrao: output/equities.csv",
+        help="Output CSV path. Default: output/equities.csv",
     )
     parser.add_argument(
         "--max-pages",
         type=int,
         default=None,
-        help="Limite de paginas para crawl (opcional).",
+        help="Page limit for crawl (optional).",
     )
     parser.add_argument(
         "--timeout",
         type=int,
         default=45,
-        help="Timeout de espera do Selenium em segundos.",
+        help="Selenium wait timeout in seconds.",
     )
     parser.add_argument(
         "--no-headless",
         action="store_true",
-        help="Executa navegador com interface visual.",
+        help="Run browser with UI.",
     )
     parser.add_argument(
         "--log-level",
         default="INFO",
-        help="Nivel de log (DEBUG, INFO, WARNING, ERROR).",
+        help="Log level (DEBUG, INFO, WARNING, ERROR).",
     )
     parser.add_argument(
         "--use-cache",
         action="store_true",
-        help="Ativa cache por regiao para evitar recrawls em execucoes repetidas.",
-    )
-    parser.add_argument(
-        "--cache-backend",
-        choices=["local", "redis"],
-        default="local",
-        help="Backend de cache. Opcoes: local, redis. Padrao: local.",
-    )
-    parser.add_argument(
-        "--cache-dir",
-        default=".cache/yahoo_crawler",
-        help="Diretorio do cache local. Padrao: .cache/yahoo_crawler",
+        help="Enable region cache to avoid recrawls in repeated runs.",
     )
     parser.add_argument(
         "--cache-ttl-minutes",
         type=int,
         default=30,
-        help="Tempo de vida do cache em minutos. Padrao: 30.",
+        help="Cache time-to-live in minutes. Default: 30.",
     )
     parser.add_argument(
         "--redis-url",
         default="redis://localhost:6379/0",
-        help="URL de conexao Redis. Ex.: redis://localhost:6379/0",
+        help="Redis connection URL. Example: redis://localhost:6379/0",
     )
     parser.add_argument(
         "--redis-key-prefix",
         default="yahoo_crawler:quotes",
-        help="Prefixo das chaves no Redis. Padrao: yahoo_crawler:quotes",
+        help="Redis key prefix. Default: yahoo_crawler:quotes",
     )
     return parser.parse_args(argv)
 
@@ -93,8 +82,6 @@ def main(argv: Optional[list] = None) -> int:
         headless=not args.no_headless,
         log_level=args.log_level,
         use_cache=args.use_cache,
-        cache_backend=args.cache_backend,
-        cache_dir=args.cache_dir,
         cache_ttl_minutes=args.cache_ttl_minutes,
         redis_url=args.redis_url,
         redis_key_prefix=args.redis_key_prefix,
@@ -102,12 +89,12 @@ def main(argv: Optional[list] = None) -> int:
 
     try:
         result = run_crawl_job(params)
-        logger.info("Fonte do resultado: %s", result.source)
-        logger.info("CSV gerado em: %s", result.output_path)
-        logger.info("Total de registros escritos: %s", result.total_records)
+        logger.info("Result source: %s", result.source)
+        logger.info("CSV generated at: %s", result.output_path)
+        logger.info("Total records written: %s", result.total_records)
         return 0
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Falha na execucao do crawler: %s", exc)
+    except Exception as exc:
+        logger.exception("Crawler execution failed: %s", exc)
         return 1
 
 

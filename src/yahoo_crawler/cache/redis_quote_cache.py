@@ -30,7 +30,7 @@ class RedisQuoteCache:
         try:
             payload_raw = self._client.get(key)
         except RedisError as exc:
-            LOGGER.warning("Falha ao consultar cache Redis (%s): %s", key, exc)
+            LOGGER.warning("Failed to read Redis cache (%s): %s", key, exc)
             return None
 
         if not payload_raw:
@@ -38,8 +38,8 @@ class RedisQuoteCache:
 
         try:
             payload = json.loads(payload_raw)
-        except Exception:  # noqa: BLE001
-            LOGGER.warning("Payload invalido no cache Redis (%s).", key)
+        except (TypeError, ValueError):
+            LOGGER.warning("Invalid payload in Redis cache (%s).", key)
             return None
 
         if payload.get("version") != self.CACHE_VERSION:
@@ -88,7 +88,7 @@ class RedisQuoteCache:
                 json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             )
         except RedisError as exc:
-            LOGGER.warning("Falha ao salvar cache Redis (%s): %s", key, exc)
+            LOGGER.warning("Failed to save Redis cache (%s): %s", key, exc)
 
         return key
 

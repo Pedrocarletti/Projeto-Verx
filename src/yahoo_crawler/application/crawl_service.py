@@ -1,9 +1,8 @@
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 from yahoo_crawler.application.screener_crawler import ScreenerCrawler
-from yahoo_crawler.cache.quote_cache import QuoteCache
 from yahoo_crawler.cache.redis_quote_cache import RedisQuoteCache
 from yahoo_crawler.config import CrawlerConfig
 from yahoo_crawler.infrastructure.webdriver_factory import WebDriverFactory
@@ -24,8 +23,6 @@ class CrawlExecutionParams:
     headless: bool = True
     log_level: str = "INFO"
     use_cache: bool = False
-    cache_backend: str = "local"
-    cache_dir: str = ".cache/yahoo_crawler"
     cache_ttl_minutes: int = 30
     redis_url: str = "redis://localhost:6379/0"
     redis_key_prefix: str = "yahoo_crawler:quotes"
@@ -41,13 +38,10 @@ class CrawlExecutionResult:
 def run_crawl_job(params: CrawlExecutionParams) -> CrawlExecutionResult:
     configure_logging(params.log_level)
 
-    cache_backend = params.cache_backend.strip().lower() or "local"
     config = CrawlerConfig(
         timeout_seconds=params.timeout_seconds,
         headless=params.headless,
         cache_enabled=params.use_cache,
-        cache_backend=cache_backend,
-        cache_dir=params.cache_dir,
         cache_ttl_minutes=params.cache_ttl_minutes,
         redis_url=params.redis_url,
         redis_key_prefix=params.redis_key_prefix,
@@ -59,7 +53,7 @@ def run_crawl_job(params: CrawlExecutionParams) -> CrawlExecutionResult:
         cached_records = cache.load(params.region, config.cache_ttl_minutes)
         if cached_records is not None:
             CsvWriter.write(params.out, cached_records)
-            LOGGER.info("Cache HIT para regiao '%s'.", params.region)
+            LOGGER.info("Cache HIT for region '%s'.", params.region)
             return CrawlExecutionResult(
                 output_path=params.out,
                 total_records=len(cached_records),
@@ -76,7 +70,7 @@ def run_crawl_job(params: CrawlExecutionParams) -> CrawlExecutionResult:
         records = crawler.crawl(region=params.region, max_pages=params.max_pages)
         if config.cache_enabled:
             cache_path = cache.save(params.region, records)
-            LOGGER.info("Cache salvo em: %s", cache_path)
+            LOGGER.info("Cache saved at: %s", cache_path)
         CsvWriter.write(params.out, records)
         return CrawlExecutionResult(
             output_path=params.out,
@@ -87,21 +81,11 @@ def run_crawl_job(params: CrawlExecutionParams) -> CrawlExecutionResult:
         client.close()
 
 
-def _build_cache(config: CrawlerConfig) -> Any:
+def _build_cache(config: CrawlerConfig) -> Optional[RedisQuoteCache]:
     if not config.cache_enabled:
-        return QuoteCache(config.cache_dir)
+        return None
 
-    if config.cache_backend == "redis":
-        return RedisQuoteCache(
-            redis_url=config.redis_url,
-            key_prefix=config.redis_key_prefix,
-        )
-
-    if config.cache_backend == "local":
-        return QuoteCache(config.cache_dir)
-
-    raise ValueError(
-        "cache_backend invalido: '{0}'. Use 'local' ou 'redis'.".format(
-            config.cache_backend
-        )
+    return RedisQuoteCache(
+        redis_url=config.redis_url,
+        key_prefix=config.redis_key_prefix,
     )

@@ -8,8 +8,6 @@ class CrawlerConfig:
     headless: bool = True
     page_load_timeout_seconds: int = 60
     cache_enabled: bool = False
-    cache_backend: str = "local"  # local | redis
-    cache_dir: str = ".cache/yahoo_crawler"
     cache_ttl_minutes: int = 30
     redis_url: str = "redis://localhost:6379/0"
     redis_key_prefix: str = "yahoo_crawler:quotes"
