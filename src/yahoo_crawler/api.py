@@ -37,13 +37,26 @@ class CrawlRequest(BaseModel):
     )
     use_cache: bool = Field(
         False,
-        description="Ativa cache local por regiao para evitar recrawls em execucoes repetidas.",
+        description="Ativa cache por regiao para evitar recrawls em execucoes repetidas.",
+    )
+    cache_backend: str = Field(
+        "local",
+        regex="^(local|redis)$",
+        description="Backend de cache: local ou redis.",
     )
     cache_dir: str = Field(
         ".cache/yahoo_crawler", description="Diretorio para arquivos de cache."
     )
     cache_ttl_minutes: int = Field(
         30, ge=0, le=1440, description="TTL do cache em minutos."
+    )
+    redis_url: str = Field(
+        "redis://localhost:6379/0",
+        description="URL de conexao Redis.",
+    )
+    redis_key_prefix: str = Field(
+        "yahoo_crawler:quotes",
+        description="Prefixo das chaves no Redis.",
     )
 
 
@@ -115,8 +128,11 @@ def options() -> dict:
             "headless": True,
             "log_level": "INFO",
             "use_cache": False,
+            "cache_backend": "local",
             "cache_dir": ".cache/yahoo_crawler",
             "cache_ttl_minutes": 30,
+            "redis_url": "redis://localhost:6379/0",
+            "redis_key_prefix": "yahoo_crawler:quotes",
         },
     }
 
@@ -132,8 +148,11 @@ def crawl(request: CrawlRequest) -> CrawlResponse:
         headless=request.headless,
         log_level=request.log_level,
         use_cache=request.use_cache,
+        cache_backend=request.cache_backend,
         cache_dir=request.cache_dir,
         cache_ttl_minutes=request.cache_ttl_minutes,
+        redis_url=request.redis_url,
+        redis_key_prefix=request.redis_key_prefix,
     )
 
     try:
@@ -199,8 +218,11 @@ def _run_crawl_job_async(job_id: str, request: CrawlRequest) -> None:
         headless=request.headless,
         log_level=request.log_level,
         use_cache=request.use_cache,
+        cache_backend=request.cache_backend,
         cache_dir=request.cache_dir,
         cache_ttl_minutes=request.cache_ttl_minutes,
+        redis_url=request.redis_url,
+        redis_key_prefix=request.redis_key_prefix,
     )
 
     try:

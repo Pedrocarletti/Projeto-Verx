@@ -141,3 +141,60 @@ def test_run_crawl_job_closes_client_on_error(tmp_path: Path, monkeypatch) -> No
         )
 
     assert created_clients and created_clients[0].closed is True
+
+
+def test_run_crawl_job_uses_redis_cache_without_selenium(tmp_path: Path, monkeypatch) -> None:
+    output_file = tmp_path / "result.csv"
+    cached_records = [
+        EquityQuote(symbol="AMX.BA", name="America Movil, S.A.B. de C.V.", price="2089.00")
+    ]
+
+    class FakeRedisCache:
+        def __init__(self, redis_url: str, key_prefix: str) -> None:
+            assert redis_url == "redis://localhost:6379/5"
+            assert key_prefix == "verx:test"
+
+        def load(self, region: str, ttl_minutes: int):
+            assert region == "Argentina"
+            assert ttl_minutes == 30
+            return cached_records
+
+        def save(self, region: str, records):
+            return "ignored:{0}:{1}".format(region, len(records))
+
+    def _raise_if_called(_self):  # pragma: no cover
+        raise AssertionError("Nao deveria abrir Selenium quando ha cache HIT no Redis.")
+
+    monkeypatch.setattr(crawl_service, "RedisQuoteCache", FakeRedisCache)
+    monkeypatch.setattr(
+        "yahoo_crawler.infrastructure.webdriver_factory.WebDriverFactory.create",
+        _raise_if_called,
+    )
+
+    result = run_crawl_job(
+        CrawlExecutionParams(
+            region="Argentina",
+            out=str(output_file),
+            use_cache=True,
+            cache_backend="redis",
+            redis_url="redis://localhost:6379/5",
+            redis_key_prefix="verx:test",
+            cache_ttl_minutes=30,
+        )
+    )
+
+    assert result.source == "cache"
+    assert result.total_records == 1
+    assert output_file.exists()
+
+
+def test_run_crawl_job_rejects_invalid_cache_backend(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="cache_backend invalido"):
+        run_crawl_job(
+            CrawlExecutionParams(
+                region="Argentina",
+                out=str(tmp_path / "result.csv"),
+                use_cache=True,
+                cache_backend="invalid",
+            )
+        )

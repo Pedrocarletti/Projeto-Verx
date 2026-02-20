@@ -48,7 +48,13 @@ def _build_args(argv: Optional[list] = None) -> argparse.Namespace:
     parser.add_argument(
         "--use-cache",
         action="store_true",
-        help="Ativa cache local por regiao para evitar recrawls em execucoes repetidas.",
+        help="Ativa cache por regiao para evitar recrawls em execucoes repetidas.",
+    )
+    parser.add_argument(
+        "--cache-backend",
+        choices=["local", "redis"],
+        default="local",
+        help="Backend de cache. Opcoes: local, redis. Padrao: local.",
     )
     parser.add_argument(
         "--cache-dir",
@@ -60,6 +66,16 @@ def _build_args(argv: Optional[list] = None) -> argparse.Namespace:
         type=int,
         default=30,
         help="Tempo de vida do cache em minutos. Padrao: 30.",
+    )
+    parser.add_argument(
+        "--redis-url",
+        default="redis://localhost:6379/0",
+        help="URL de conexao Redis. Ex.: redis://localhost:6379/0",
+    )
+    parser.add_argument(
+        "--redis-key-prefix",
+        default="yahoo_crawler:quotes",
+        help="Prefixo das chaves no Redis. Padrao: yahoo_crawler:quotes",
     )
     return parser.parse_args(argv)
 
@@ -77,8 +93,11 @@ def main(argv: Optional[list] = None) -> int:
         headless=not args.no_headless,
         log_level=args.log_level,
         use_cache=args.use_cache,
+        cache_backend=args.cache_backend,
         cache_dir=args.cache_dir,
         cache_ttl_minutes=args.cache_ttl_minutes,
+        redis_url=args.redis_url,
+        redis_key_prefix=args.redis_key_prefix,
     )
 
     try:

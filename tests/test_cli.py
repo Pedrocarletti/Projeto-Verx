@@ -17,10 +17,16 @@ def test_build_args_parses_supported_flags() -> None:
             "--log-level",
             "DEBUG",
             "--use-cache",
+            "--cache-backend",
+            "redis",
             "--cache-dir",
             ".cache/custom",
             "--cache-ttl-minutes",
             "90",
+            "--redis-url",
+            "redis://localhost:6379/1",
+            "--redis-key-prefix",
+            "verx:test",
         ]
     )
 
@@ -31,8 +37,11 @@ def test_build_args_parses_supported_flags() -> None:
     assert args.no_headless is True
     assert args.log_level == "DEBUG"
     assert args.use_cache is True
+    assert args.cache_backend == "redis"
     assert args.cache_dir == ".cache/custom"
     assert args.cache_ttl_minutes == 90
+    assert args.redis_url == "redis://localhost:6379/1"
+    assert args.redis_key_prefix == "verx:test"
 
 
 def test_main_returns_zero_and_maps_cli_args(monkeypatch) -> None:
@@ -63,10 +72,16 @@ def test_main_returns_zero_and_maps_cli_args(monkeypatch) -> None:
             "--log-level",
             "WARNING",
             "--use-cache",
+            "--cache-backend",
+            "redis",
             "--cache-dir",
             ".cache/test",
             "--cache-ttl-minutes",
             "15",
+            "--redis-url",
+            "redis://localhost:6379/2",
+            "--redis-key-prefix",
+            "verx:prod",
         ]
     )
 
@@ -79,8 +94,11 @@ def test_main_returns_zero_and_maps_cli_args(monkeypatch) -> None:
     assert params.headless is False
     assert params.log_level == "WARNING"
     assert params.use_cache is True
+    assert params.cache_backend == "redis"
     assert params.cache_dir == ".cache/test"
     assert params.cache_ttl_minutes == 15
+    assert params.redis_url == "redis://localhost:6379/2"
+    assert params.redis_key_prefix == "verx:prod"
 
 
 def test_main_returns_one_when_crawl_job_fails(monkeypatch) -> None:

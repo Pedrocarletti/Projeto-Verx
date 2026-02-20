@@ -31,10 +31,14 @@ def test_options_endpoint_exposes_defaults_and_endpoints() -> None:
     assert "/crawl" in payload["endpoints"]
     assert payload["defaults"]["region"] == "Argentina"
     assert payload["defaults"]["timeout_seconds"] == 45
+    assert payload["defaults"]["cache_backend"] == "local"
 
 
 def test_crawl_endpoint_returns_result_payload(monkeypatch) -> None:
+    captured = {}
+
     def _fake_run(_params):
+        captured["params"] = _params
         return CrawlExecutionResult(
             output_path="output/test.csv",
             total_records=2,
@@ -49,6 +53,35 @@ def test_crawl_endpoint_returns_result_payload(monkeypatch) -> None:
     assert response.source == "live"
     assert response.total_records == 2
     assert response.output_path == "output/test.csv"
+    assert captured["params"].cache_backend == "local"
+
+
+def test_crawl_endpoint_maps_redis_cache_fields(monkeypatch) -> None:
+    captured = {}
+
+    def _fake_run(_params):
+        captured["params"] = _params
+        return CrawlExecutionResult(
+            output_path="output/redis.csv",
+            total_records=1,
+            source="cache",
+        )
+
+    monkeypatch.setattr(api, "run_crawl_job", _fake_run)
+
+    request = api.CrawlRequest(
+        region="Argentina",
+        use_cache=True,
+        cache_backend="redis",
+        redis_url="redis://localhost:6379/9",
+        redis_key_prefix="verx:cache",
+    )
+    response = api.crawl(request)
+
+    assert response.source == "cache"
+    assert captured["params"].cache_backend == "redis"
+    assert captured["params"].redis_url == "redis://localhost:6379/9"
+    assert captured["params"].redis_key_prefix == "verx:cache"
 
 
 def test_crawl_endpoint_raises_http_500_when_execution_fails(monkeypatch) -> None:
@@ -112,3 +145,8 @@ def test_crawl_job_status_raises_404_for_unknown_job() -> None:
 def test_crawl_request_validates_required_region() -> None:
     with pytest.raises(ValidationError):
         api.CrawlRequest()
+
+
+def test_crawl_request_validates_cache_backend() -> None:
+    with pytest.raises(ValidationError):
+        api.CrawlRequest(region="Argentina", cache_backend="invalid")

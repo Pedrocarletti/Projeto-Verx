@@ -41,6 +41,12 @@ Com cache local (melhor para execucoes repetidas):
 python -m yahoo_crawler.cli --region "Argentina" --out output/argentina.csv --use-cache --cache-ttl-minutes 30
 ```
 
+Com cache Redis:
+
+```bash
+python -m yahoo_crawler.cli --region "Argentina" --out output/argentina.csv --use-cache --cache-backend redis --redis-url "redis://localhost:6379/0" --redis-key-prefix "yahoo_crawler:quotes" --cache-ttl-minutes 30
+```
+
 ## API + Swagger
 
 Suba a API:
@@ -73,8 +79,11 @@ Exemplo de request no `POST /crawl`:
   "headless": true,
   "log_level": "INFO",
   "use_cache": true,
+  "cache_backend": "redis",
   "cache_dir": ".cache/yahoo_crawler",
-  "cache_ttl_minutes": 30
+  "cache_ttl_minutes": 30,
+  "redis_url": "redis://localhost:6379/0",
+  "redis_key_prefix": "yahoo_crawler:quotes"
 }
 ```
 
@@ -102,7 +111,8 @@ src/yahoo_crawler/
     screener_crawler.py      # orquestracao do caso de uso
     crawl_service.py         # servico compartilhado (CLI/API)
   cache/
-    quote_cache.py           # cache persistente por regiao (TTL)
+    quote_cache.py           # cache local em arquivo por regiao (TTL)
+    redis_quote_cache.py     # cache Redis por regiao (TTL via created_at)
   domain/
     models.py                # EquityQuote
   infrastructure/
@@ -150,6 +160,7 @@ Cobertura de testes:
 ## Performance
 
 - Cache persistente por regiao (`--use-cache`) com TTL configuravel (`--cache-ttl-minutes`)
+- Backend de cache selecionavel (`--cache-backend local|redis`)
 - Parse com BeautifulSoup apenas do HTML da tabela (evita parse da pagina inteira)
 - Cache em memoria de parsing por hash da pagina (evita retrabalho se pagina repetir)
 - Uma chamada por iteracao para verificar `next page` (menos ida ao Selenium)
