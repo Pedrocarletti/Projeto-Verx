@@ -10,6 +10,6 @@ __pycache__
 *.pyd
 .env
 tests
-output
+/output
 debug_after_apply.png
 page.html
