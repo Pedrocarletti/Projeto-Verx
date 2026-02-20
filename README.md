@@ -195,17 +195,3 @@ Current flow:
 GitHub setup for current scenario:
 
 - No AWS variables or secrets are required by the active workflows.
-- If you want versioned builds, keep creating tags with `v*`.
-
-## Publish to GitHub
-
-After local validation, publish to your repository:
-
-```bash
-git init
-git add .
-git commit -m "feat: yahoo equity screener crawler with selenium + bs4 + tests"
-git branch -M main
-git remote add origin <YOUR_REPO_URL>
-git push -u origin main
-```
